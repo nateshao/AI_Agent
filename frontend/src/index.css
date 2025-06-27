@@ -1,3 +1,21 @@
+:root {
+  --bg: #f0f2f5;
+  --sidebar-bg: #fff;
+  --selected: #e6f7ff;
+  --msg-bg: #f7f7f7;
+  --suggest-bg: #fff;
+  --input-bg: #fff;
+  --input-color: #222;
+}
+[data-theme='dark'] {
+  --bg: #181c24;
+  --sidebar-bg: #23272f;
+  --selected: #2a4b6a;
+  --msg-bg: #23272f;
+  --suggest-bg: #23272f;
+  --input-bg: #23272f;
+  --input-color: #eee;
+}
 html, body, #root {
   height: 100%;
   margin: 0;
