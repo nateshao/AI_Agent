@@ -56,6 +56,9 @@ function App() {
   const [agentGoal, setAgentGoal] = useState('');
   const [agentResult, setAgentResult] = useState<any>(null);
   const [agentLoading, setAgentLoading] = useState(false);
+  const [agentTypes, setAgentTypes] = useState<{type: string, name: string, desc: string}[]>([]);
+  const [selectedAgentType, setSelectedAgentType] = useState('general');
+  const [taskChainInput, setTaskChainInput] = useState('');
 
   useEffect(() => {
     document.body.setAttribute('data-theme', theme);
@@ -106,6 +109,10 @@ function App() {
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/agent/types`).then(res => res.json()).then(setAgentTypes);
   }, []);
 
   const startConversation = async () => {
@@ -285,10 +292,17 @@ function App() {
   const handleAgentRun = async () => {
     setAgentLoading(true);
     setAgentResult(null);
+    let task_chain = taskChainInput.trim()
+      ? taskChainInput.split('\n').map(s => s.trim()).filter(Boolean)
+      : undefined;
     const res = await fetch(`${API_BASE}/agent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: agentGoal })
+      body: JSON.stringify({
+        goal: agentGoal,
+        agent_type: selectedAgentType,
+        task_chain: task_chain && task_chain.length > 0 ? task_chain : undefined
+      })
     });
     const data = await res.json();
     setAgentResult(data);
@@ -385,6 +399,17 @@ function App() {
         {agentMode ? (
           <div style={{ background: 'var(--msg-bg)', borderRadius: 8, padding: 24 }}>
             <h3>Agent模式：任务分解与多步推理</h3>
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ marginRight: 8 }}>选择Agent：</span>
+              <select value={selectedAgentType} onChange={e => setSelectedAgentType(e.target.value)}>
+                {agentTypes.map(t => (
+                  <option key={t.type} value={t.type}>{t.name}</option>
+                ))}
+              </select>
+              <span style={{ color: '#888', marginLeft: 8 }}>
+                {agentTypes.find(t => t.type === selectedAgentType)?.desc}
+              </span>
+            </div>
             <textarea
               value={agentGoal}
               onChange={e => setAgentGoal(e.target.value)}
@@ -393,6 +418,17 @@ function App() {
               placeholder="请输入你的复杂目标，如：帮我写一份AI创业计划书"
               disabled={agentLoading}
             />
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ marginRight: 8 }}>任务链（可选，每行一个子任务）：</span>
+              <textarea
+                value={taskChainInput}
+                onChange={e => setTaskChainInput(e.target.value)}
+                rows={3}
+                style={{ width: '100%', borderRadius: 8, border: '1px solid #eee', fontSize: 15, padding: 8 }}
+                placeholder={"如：\n市场分析\n技术方案\n团队建议"}
+                disabled={agentLoading}
+              />
+            </div>
             <div>
               <button onClick={handleAgentRun} disabled={agentLoading || !agentGoal.trim()} style={{ padding: '8px 24px', fontSize: 16 }}>
                 运行Agent
@@ -403,14 +439,42 @@ function App() {
               <div style={{ marginTop: 24 }}>
                 <h4>目标：</h4>
                 <div>{agentResult.goal}</div>
-                <h4 style={{ marginTop: 16 }}>推理链路：</h4>
-                <ol>
-                  {agentResult.steps && agentResult.steps.map((step: string, idx: number) => (
-                    <li key={idx}>{step}</li>
-                  ))}
-                </ol>
-                <h4 style={{ marginTop: 16 }}>最终结果：</h4>
-                <div>{agentResult.result}</div>
+                {agentResult.task_chain ? (
+                  <>
+                    <h4 style={{ marginTop: 16 }}>任务链：</h4>
+                    <ol>
+                      {agentResult.task_chain.map((t: string, idx: number) => (
+                        <li key={idx}>{t}</li>
+                      ))}
+                    </ol>
+                    <h4 style={{ marginTop: 16 }}>每步推理链路：</h4>
+                    {agentResult.steps && agentResult.steps.map((stepObj: any, idx: number) => (
+                      <div key={idx} style={{ marginBottom: 16, background: '#fff', borderRadius: 6, padding: 12 }}>
+                        <b>子任务：</b>{stepObj.sub_goal}
+                        <ol style={{ marginTop: 6 }}>
+                          {stepObj.steps.map((s: string, i: number) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    ))}
+                    <h4 style={{ marginTop: 16 }}>最终结果：</h4>
+                    <div>{agentResult.result}</div>
+                  </>
+                ) : (
+                  <>
+                    <h4 style={{ marginTop: 16 }}>推理链路：</h4>
+                    <ol>
+                      {agentResult.steps && agentResult.steps.map((step: string, idx: number) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ol>
+                    <h4 style={{ marginTop: 16 }}>最终结果：</h4>
+                    <div>{agentResult.result}</div>
+                  </>
+                )}
+                <h4 style={{ marginTop: 16 }}>Agent记忆：</h4>
+                <pre style={{ background: '#f7f7f7', borderRadius: 6, padding: 12 }}>{JSON.stringify(agentResult.memory, null, 2)}</pre>
               </div>
             )}
           </div>
