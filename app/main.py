@@ -234,11 +234,78 @@ AGENT_TYPES = {
     # 可扩展更多Agent
 }
 
-def agent_with_tools(goal: str, tools: list = None, memory: dict = None, user_id: str = 'default', agent_type: str = 'general'):
+def agent_with_tools(goal: str, tools: list = None, memory: dict = None, user_id: str = 'default', agent_type: str = 'general', task_chain: list = None):
     """
-    多Agent协作：根据agent_type切换不同专家Agent。
+    多Agent协作+任务链：支持用户自定义多步任务链，Agent自动串联执行。
     """
     memory = memory or get_agent_memory(user_id)
+    base_prompt = AGENT_TYPES.get(agent_type, AGENT_TYPES['general'])['system_prompt']
+    results = []
+    all_steps = []
+    all_tools = []
+    if task_chain and isinstance(task_chain, list) and len(task_chain) > 0:
+        for idx, sub_goal in enumerate(task_chain):
+            system_prompt = (
+                base_prompt +
+                f"\n你当前的子任务：{sub_goal}\n"
+                "你可以调用如下工具：\n"
+                + '\n'.join([f"{k}: {v['desc']}" for k, v in AGENT_TOOLS.items()]) +
+                "\n如需调用工具，请用如下格式：\n[TOOL] 工具名: 工具参数\n你必须在推理链中插入工具调用结果。"
+                "你有如下记忆（可随时引用）：\n" + json.dumps(memory, ensure_ascii=False) +
+                "\n如果信息不足，请主动向用户反问或提出建议。"
+                "最终请输出本子任务的结果。"
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": sub_goal}
+            ]
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-1106",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1200
+            )
+            content = response['choices'][0]['message']['content']
+            steps = []
+            tool_calls = []
+            for line in content.split('\n'):
+                if line.strip().startswith('[TOOL]'):
+                    try:
+                        tool_line = line.strip()[7:].strip()
+                        tool_name, tool_param = tool_line.split(':', 1)
+                        tool_name = tool_name.strip()
+                        tool_param = tool_param.strip()
+                        if tool_name in AGENT_TOOLS:
+                            tool_result = AGENT_TOOLS[tool_name]['func'](tool_param)
+                            steps.append(f"[工具调用] {tool_name}({tool_param}) => {tool_result}")
+                            tool_calls.append({"tool": tool_name, "param": tool_param, "result": tool_result})
+                        else:
+                            steps.append(f"[工具调用] 未知工具: {tool_name}")
+                    except Exception as e:
+                        steps.append(f"[工具调用] 解析失败: {e}")
+                elif line.strip():
+                    steps.append(line.strip())
+            all_steps.append({"sub_goal": sub_goal, "steps": steps})
+            all_tools.extend(tool_calls)
+            # 记忆更新
+            for step in steps:
+                if step.startswith('记住') or '记住：' in step:
+                    update_agent_memory(user_id, f"记忆_{len(memory)+1}", step)
+            results.append(steps[-1] if steps else content)
+        final_result = '\n'.join(results)
+        return {
+            "goal": goal,
+            "task_chain": task_chain,
+            "steps": all_steps,
+            "tools": all_tools,
+            "memory": get_agent_memory(user_id),
+            "result": final_result,
+            "agent_type": agent_type,
+            "agent_name": AGENT_TYPES.get(agent_type, AGENT_TYPES['general'])['name']
+        }
+    # 无task_chain时，走原有单步逻辑
+    # ...原有单步逻辑...
+    # 复制原有 agent_with_tools 单步逻辑到此处
     base_prompt = AGENT_TYPES.get(agent_type, AGENT_TYPES['general'])['system_prompt']
     system_prompt = (
         base_prompt +
@@ -279,7 +346,6 @@ def agent_with_tools(goal: str, tools: list = None, memory: dict = None, user_id
                 steps.append(f"[工具调用] 解析失败: {e}")
         elif line.strip():
             steps.append(line.strip())
-    # 简单记忆更新：如推理链中有"记住"关键词，自动存入memory
     for step in steps:
         if step.startswith('记住') or '记住：' in step:
             update_agent_memory(user_id, f"记忆_{len(memory)+1}", step)
@@ -294,11 +360,11 @@ def agent_with_tools(goal: str, tools: list = None, memory: dict = None, user_id
     }
 
 @app.post("/agent")
-def agent(goal: str = Body(...), tools: list = Body(default=[]), memory: dict = Body(default={}), user_id: str = Body(default='default'), agent_type: str = Body(default='general')):
+def agent(goal: str = Body(...), tools: list = Body(default=[]), memory: dict = Body(default={}), user_id: str = Body(default='default'), agent_type: str = Body(default='general'), task_chain: list = Body(default=None)):
     """
-    Agent模式：多Agent协作，支持选择不同专家Agent。
+    Agent模式：多Agent协作+任务链，支持自动化多步任务。
     """
-    result = agent_with_tools(goal, tools, memory, user_id, agent_type)
+    result = agent_with_tools(goal, tools, memory, user_id, agent_type, task_chain)
     return JSONResponse(content=result)
 
 @app.get("/agent/types")
